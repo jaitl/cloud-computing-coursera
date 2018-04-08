@@ -131,13 +131,12 @@ int MP1Node::introduceSelfToGroup(Address *joinaddr) {
         memberNode->inGroup = true;
     }
     else {
-        size_t msgsize = sizeof(MessageHdr) + sizeof(joinaddr->addr) + sizeof(long) + 1;
-        msg = (MessageHdr *) malloc(msgsize * sizeof(char));
+        msg = new MessageHdr();
 
         // create JOINREQ message: format of data is {struct Address myaddr}
         msg->msgType = JOINREQ;
-        memcpy((char *)(msg+1), &memberNode->addr.addr, sizeof(memberNode->addr.addr));
-        memcpy((char *)(msg+1) + 1 + sizeof(memberNode->addr.addr), &memberNode->heartbeat, sizeof(long));
+        memcpy(&msg->addr, &memberNode->addr, sizeof(Address));
+        memcpy(&msg->heartbeat, &memberNode->heartbeat, sizeof(long));
 
 #ifdef DEBUGLOG
         sprintf(s, "Trying to join...");
@@ -145,7 +144,7 @@ int MP1Node::introduceSelfToGroup(Address *joinaddr) {
 #endif
 
         // send JOINREQ message to introducer member
-        emulNet->ENsend(&memberNode->addr, joinaddr, (char *)msg, msgsize);
+        emulNet->ENsend(&memberNode->addr, joinaddr, (char *)msg, sizeof(MessageHdr));
 
         free(msg);
     }
@@ -215,9 +214,29 @@ void MP1Node::checkMessages() {
  * DESCRIPTION: Message handler for different message types
  */
 bool MP1Node::recvCallBack(void *env, char *data, int size ) {
-	/*
-	 * Your code goes here
-	 */
+
+    MessageHdr *msg = (MessageHdr *) data;
+
+    if (msg->msgType == MsgTypes::JOINREQ) {
+        int id = *(int*)(&msg->addr.addr);
+        short port = *(short*)(&msg->addr.addr[4]);
+
+        MemberListEntry *newMemeb = new MemberListEntry(id, port, 0, par->getcurrtime());
+        memberNode->memberList.push_back(*newMemeb);
+
+        MessageHdr *repMsg = new MessageHdr();
+        repMsg->msgType = MsgTypes::JOINREP;
+        memcpy(&repMsg->addr, &memberNode->addr, sizeof(Address));
+        repMsg->heartbeat = 0;
+
+        emulNet->ENsend(&memberNode->addr, &msg->addr, (char *) repMsg, sizeof(MessageHdr));
+
+        free(repMsg);
+    } else if (msg->msgType == MsgTypes::JOINREP) {
+        log->logNodeAdd(&memberNode->addr, &msg->addr);
+    }
+
+    free(msg);
 }
 
 /**

@@ -35,3 +35,10 @@
 .DS_Store
 .AppleDouble
 .LSOverride
+
+# CLoin
+.idea/
+*.log
+Application
+cmake-build-debug/
+CMakeLists.txt

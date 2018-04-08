@@ -41,6 +41,8 @@ enum MsgTypes{
  */
 typedef struct MessageHdr {
 	enum MsgTypes msgType;
+	Address addr;
+	long heartbeat;
 }MessageHdr;
 
 /**
