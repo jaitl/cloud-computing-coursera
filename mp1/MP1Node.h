@@ -31,7 +31,7 @@
 enum MsgTypes{
     JOINREQ,
     JOINREP,
-    DUMMYLASTMSGTYPE
+    PING
 };
 
 /**
@@ -42,7 +42,8 @@ enum MsgTypes{
 typedef struct MessageHdr {
 	enum MsgTypes msgType;
 	Address addr;
-	long heartbeat;
+	int countMembers = 0;
+	MemberListEntry *members;
 }MessageHdr;
 
 /**
@@ -57,6 +58,10 @@ private:
 	Params *par;
 	Member *memberNode;
 	char NULLADDR[6];
+	MessageHdr * createMessage(MsgTypes t);
+	void addNewMember(MessageHdr *m);
+	Address* getAddr(MemberListEntry e);
+	void pingHandler(MessageHdr *m);
 
 public:
 	MP1Node(Member *, Params *, EmulNet *, Log *, Address *);
