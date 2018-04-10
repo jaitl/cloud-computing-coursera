@@ -60,8 +60,13 @@ private:
 	char NULLADDR[6];
 	MessageHdr * createMessage(MsgTypes t);
 	void addNewMember(MessageHdr *m);
+    void addNewMember(MemberListEntry *e);
 	Address* getAddr(MemberListEntry e);
+    Address* getAddr(int id, short port);
+    int getMemberPosition(MemberListEntry *e);
 	void pingHandler(MessageHdr *m);
+    MemberListEntry* findMember(int id, short port);
+    MemberListEntry* findMember(Address *addr);
 
 public:
 	MP1Node(Member *, Params *, EmulNet *, Log *, Address *);
