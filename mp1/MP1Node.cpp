@@ -231,7 +231,6 @@ bool MP1Node::recvCallBack(void *env, char *data, int size ) {
 
         std::cout << "receive [" << par->getcurrtime() << "]  JOINREP [" << memberNode->addr.getAddress() << "] from " << msg->addr.getAddress() << std::endl;
         addNewMember(msg);
-        log->logNodeAdd(&memberNode->addr, &msg->addr);
     } else if (msg->msgType == MsgTypes::PING) {
         std::cout << "receive [" << par->getcurrtime() << "] PING [" << memberNode->addr.getAddress() << "] from " << msg->addr.getAddress() << std::endl;
         pingHandler(msg);
@@ -318,6 +317,7 @@ void MP1Node::addNewMember(MemberListEntry *e) {
     }
 
     if (par->getcurrtime() - e->timestamp < TREMOVE) {
+        log->logNodeAdd(&memberNode->addr, addr);
         MemberListEntry *newMember = new MemberListEntry(e->id, e->port, e->heartbeat, par->getcurrtime());
         memberNode->memberList.push_back(*newMember);
     }
@@ -330,6 +330,8 @@ void MP1Node::addNewMember(MessageHdr *m) {
     if (findMember(id, port) != nullptr) {
         return;
     }
+
+    log->logNodeAdd(&memberNode->addr, &m->addr);
 
     MemberListEntry *newMemeb = new MemberListEntry(id, port, 1, par->getcurrtime());
     memberNode->memberList.push_back(*newMemeb);
