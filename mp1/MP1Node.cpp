@@ -317,7 +317,7 @@ void MP1Node::addNewMember(MemberListEntry *e) {
         return;
     }
 
-    if (e->timestamp + TFAIL + TREMOVE >= par->getcurrtime()) {
+    if (par->getcurrtime() - e->timestamp < TREMOVE) {
         MemberListEntry *newMember = new MemberListEntry(e->id, e->port, e->heartbeat, par->getcurrtime());
         memberNode->memberList.push_back(*newMember);
     }
@@ -345,11 +345,13 @@ void MP1Node::addNewMember(MessageHdr *m) {
  * 				Propagate your membership list
  */
 void MP1Node::nodeLoopOps() {
+    memberNode->heartbeat += 1;
+
     vector<MemberListEntry> deleteMembers;
 
     // check local members status
     for(MemberListEntry clusterMemb: memberNode->memberList) {
-        if (clusterMemb.timestamp + TFAIL + TREMOVE < par->getcurrtime()) {
+        if (par->getcurrtime() - clusterMemb.timestamp >= TREMOVE ) {
             deleteMembers.push_back(clusterMemb);
         }
     }
