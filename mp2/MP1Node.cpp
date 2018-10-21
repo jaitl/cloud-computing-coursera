@@ -131,13 +131,12 @@ int MP1Node::introduceSelfToGroup(Address *joinaddr) {
         memberNode->inGroup = true;
     }
     else {
-        size_t msgsize = sizeof(MessageHdr) + sizeof(joinaddr->addr) + sizeof(long) + 1;
-        msg = (MessageHdr *) malloc(msgsize * sizeof(char));
+        msg = new MessageHdr();
+        memset(&msg->addr, 0, sizeof(msg->addr));
 
         // create JOINREQ message: format of data is {struct Address myaddr}
         msg->msgType = JOINREQ;
-        memcpy((char *)(msg+1), &memberNode->addr.addr, sizeof(memberNode->addr.addr));
-        memcpy((char *)(msg+1) + 1 + sizeof(memberNode->addr.addr), &memberNode->heartbeat, sizeof(long));
+        memcpy(&msg->addr, &memberNode->addr, sizeof(Address));
 
 #ifdef DEBUGLOG
         sprintf(s, "Trying to join...");
@@ -145,7 +144,7 @@ int MP1Node::introduceSelfToGroup(Address *joinaddr) {
 #endif
 
         // send JOINREQ message to introducer member
-        emulNet->ENsend(&memberNode->addr, joinaddr, (char *)msg, msgsize);
+        emulNet->ENsend(&memberNode->addr, joinaddr, (char *)msg, sizeof(MessageHdr));
 
         free(msg);
     }
@@ -215,10 +214,130 @@ void MP1Node::checkMessages() {
  * DESCRIPTION: Message handler for different message types
  */
 bool MP1Node::recvCallBack(void *env, char *data, int size ) {
-	/*
-	 * Your code goes here
-	 */
+
+    MessageHdr *msg = (MessageHdr *) data;
+
+    if (msg->msgType == MsgTypes::JOINREQ) {
+        addNewMember(msg);
+
+        MessageHdr *repMsg = createMessage(MsgTypes::JOINREP);
+
+        emulNet->ENsend(&memberNode->addr, &msg->addr, (char *) repMsg, sizeof(MessageHdr));
+        std::cout << "send [" << par->getcurrtime() << "] JOINREP [" << memberNode->addr.getAddress() << "] to " << msg->addr.getAddress() << std::endl;
+
+        delete repMsg;
+    } else if (msg->msgType == MsgTypes::JOINREP) {
+        memberNode->inGroup = true;
+
+        std::cout << "receive [" << par->getcurrtime() << "]  JOINREP [" << memberNode->addr.getAddress() << "] from " << msg->addr.getAddress() << std::endl;
+        addNewMember(msg);
+    } else if (msg->msgType == MsgTypes::PING) {
+        std::cout << "receive [" << par->getcurrtime() << "] PING [" << memberNode->addr.getAddress() << "] from " << msg->addr.getAddress() << std::endl;
+        pingHandler(msg);
+    }
+
+    free(msg);
 }
+
+void MP1Node::pingHandler(MessageHdr *m) {
+    // update current node counter
+    MemberListEntry *localMember = findMember(&m->addr);
+
+    if (localMember != nullptr) {
+        localMember->heartbeat += 1;
+        localMember->timestamp = par->getcurrtime();
+    } else {
+        addNewMember(m);
+    }
+
+    // update other node counters
+    for(int i = 0; i < m->countMembers; i++) {
+        MemberListEntry gissipMember = m->members[i];
+        MemberListEntry *clusterMember = findMember(gissipMember.id, gissipMember.port);
+
+        if (clusterMember != nullptr) {
+            if (gissipMember.heartbeat > clusterMember->heartbeat) {
+                clusterMember->heartbeat = gissipMember.heartbeat;
+                clusterMember->timestamp = par->getcurrtime();
+            }
+        } else {
+            addNewMember(&gissipMember);
+        }
+    }
+}
+
+int MP1Node::getMemberPosition(MemberListEntry *e) {
+    for(int i = 0; i < memberNode->memberList.size(); i++) {
+        MemberListEntry clusterMemb = memberNode->memberList[i];
+
+        if (clusterMemb.id == e->id && clusterMemb.port == e->port) {
+            return i;
+        }
+    }
+}
+
+
+MemberListEntry* MP1Node::findMember(int id, short port) {
+    for(int i = 0; i < memberNode->memberList.size(); i++) {
+        MemberListEntry *clusterMemb = memberNode->memberList.data() + i;
+
+        if (clusterMemb->id == id && clusterMemb->port == port) {
+            return clusterMemb;
+        }
+    }
+
+    return nullptr;
+}
+
+MemberListEntry* MP1Node::findMember(Address *addr) {
+    for(int i = 0; i < memberNode->memberList.size(); i++) {
+        MemberListEntry *clusterMemb = memberNode->memberList.data() + i;
+        Address *memberAddr = getAddr(clusterMemb->id, clusterMemb->port);
+
+        if (*addr == *memberAddr) {
+            return clusterMemb;
+        }
+
+        delete memberAddr;
+    }
+
+    return nullptr;
+}
+
+void MP1Node::addNewMember(MemberListEntry *e) {
+    Address *addr = getAddr(*e);
+
+    if (findMember(addr) != nullptr) {
+        return;
+    }
+
+    if (*addr == memberNode->addr) {
+        delete addr;
+        return;
+    }
+
+    if (par->getcurrtime() - e->timestamp < TREMOVE) {
+        log->logNodeAdd(&memberNode->addr, addr);
+        MemberListEntry *newMember = new MemberListEntry(e->id, e->port, e->heartbeat, par->getcurrtime());
+        memberNode->memberList.push_back(*newMember);
+    }
+}
+
+void MP1Node::addNewMember(MessageHdr *m) {
+    int id = *(int*)(&m->addr.addr);
+    short port = *(short*)(&m->addr.addr[4]);
+
+    if (findMember(id, port) != nullptr) {
+        return;
+    }
+
+    log->logNodeAdd(&memberNode->addr, &m->addr);
+
+    MemberListEntry *newMemeb = new MemberListEntry(id, port, 1, par->getcurrtime());
+    memberNode->memberList.push_back(*newMemeb);
+}
+
+
 
 /**
  * FUNCTION NAME: nodeLoopOps
@@ -228,12 +347,66 @@ bool MP1Node::recvCallBack(void *env, char *data, int size ) {
  * 				Propagate your membership list
  */
 void MP1Node::nodeLoopOps() {
+    memberNode->heartbeat += 1;
 
-	/*
-	 * Your code goes here
-	 */
+    vector<MemberListEntry> deleteMembers;
 
-    return;
+    // check local members status
+    for(MemberListEntry clusterMemb: memberNode->memberList) {
+        if (par->getcurrtime() - clusterMemb.timestamp >= TREMOVE ) {
+            deleteMembers.push_back(clusterMemb);
+        }
+    }
+
+    for(MemberListEntry delMember: deleteMembers) {
+        Address *deleteAddr = getAddr(delMember);
+        log->logNodeRemove(&memberNode->addr, deleteAddr);
+        int delPos = getMemberPosition(&delMember);
+        memberNode->memberList.erase(memberNode->memberList.begin() + delPos);
+    }
+
+    // send gossip ping
+    MessageHdr * message = createMessage(MsgTypes::PING);
+    for(MemberListEntry clusterMemb: memberNode->memberList) {
+        Address *address = getAddr(clusterMemb);
+        std::cout << "send [" << par->getcurrtime() << "] PING [" << memberNode->addr.getAddress() << "] to " << address->getAddress() << std::endl;
+        emulNet->ENsend(&memberNode->addr, address, (char *) message, sizeof(MessageHdr));
+        delete address;
+    }
+    delete message;
+}
+
+Address* MP1Node::getAddr(MemberListEntry e) {
+    Address *address = new Address();
+    memset(address->addr, 0, sizeof(address->addr));
+    memcpy(address->addr, &e.id, sizeof(int));
+    memcpy(address->addr + sizeof(int), &e.port, sizeof(short));
+
+    return address;
+}
+
+Address* MP1Node::getAddr(int id, short port) {
+    Address *address = new Address();
+    memset(address->addr, 0, sizeof(address->addr));
+    memcpy(address->addr, &id, sizeof(int));
+    memcpy(address->addr + sizeof(int), &port, sizeof(short));
+
+    return address;
+}
+
+MessageHdr* MP1Node::createMessage(MsgTypes t) {
+    MessageHdr *repMsg = new MessageHdr();
+    repMsg->countMembers = memberNode->memberList.size();
+
+    if (memberNode->memberList.size() > 0) {
+        repMsg->members = new MemberListEntry[memberNode->memberList.size()];
+        memcpy(repMsg->members, memberNode->memberList.data(), sizeof(MemberListEntry) * memberNode->memberList.size());
+    }
+
+    repMsg->msgType = t;
+    memcpy(&repMsg->addr, &memberNode->addr, sizeof(Address));
+
+    return repMsg;
 }
 
 /**
