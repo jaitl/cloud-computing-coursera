@@ -19,6 +19,14 @@
 #include "Message.h"
 #include "Queue.h"
 
+typedef struct TransactionInfo {
+	int id;
+	MessageType type;
+	int createTime;
+	int replicationFactor;
+	int replyCount;
+}TransactionInfo;
+
 /**
  * CLASS NAME: MP2Node
  *
@@ -48,6 +56,10 @@ private:
 	// Object of Log
 	Log * log;
 
+	// Transactions
+	map<int, TransactionInfo*> transactionTable;
+	int createTransaction(MessageType mType, int time, int rf);
+
 public:
 	MP2Node(Member *memberNode, Params *par, EmulNet *emulNet, Log *log, Address *addressOfMember);
 	Member * getMemberNode() {
@@ -58,7 +70,9 @@ public:
 	void updateRing();
 	vector<Node> getMembershipList();
 	size_t hashFunction(string key);
+	size_t myHash();
 	void findNeighbors();
+
 
 	// client side CRUD APIs
 	void clientCreate(string key, string value);
@@ -73,14 +87,17 @@ public:
 	// handle messages from receiving queue
 	void checkMessages();
 
+	// handle client CRUD operation
+	void handleAction(MessageType mType, string key, string value);
+
 	// coordinator dispatches messages to corresponding nodes
-	void dispatchMessages(Message message);
+	void dispatchMessages(Message *message, Address *addr);
 
 	// find the addresses of nodes that are responsible for a key
 	vector<Node> findNodes(string key);
 
 	// server
-	bool createKeyValue(string key, string value, ReplicaType replica);
+	bool createKeyValue(string key, string value, int tId);
 	string readKey(string key);
 	bool updateKeyValue(string key, string value, ReplicaType replica);
 	bool deletekey(string key);

@@ -52,10 +52,11 @@ void MP2Node::updateRing() {
 	// Sort the list based on the hashCode
 	sort(curMemList.begin(), curMemList.end());
 
+	ring = curMemList;
 
-	/*
-	 * Step 3: Run the stabilization protocol IF REQUIRED
-	 */
+		/*
+         * Step 3: Run the stabilization protocol IF REQUIRED
+         */
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
 }
 
@@ -72,6 +73,7 @@ void MP2Node::updateRing() {
 vector<Node> MP2Node::getMembershipList() {
 	unsigned int i;
 	vector<Node> curMemList;
+	curMemList.emplace_back(Node(this->memberNode->addr));
 	for ( i = 0 ; i < this->memberNode->memberList.size(); i++ ) {
 		Address addressOfThisMember;
 		int id = this->memberNode->memberList.at(i).getid();
@@ -99,6 +101,15 @@ size_t MP2Node::hashFunction(string key) {
 }
 
 /**
+ * Compute own Hash
+ */
+size_t MP2Node::myHash() {
+	std::hash<string> hashFunc;
+	size_t ret = hashFunc(this->memberNode->addr.addr);
+	return ret%RING_SIZE;
+}
+
+/**
  * FUNCTION NAME: clientCreate
  *
  * DESCRIPTION: client side CREATE API
@@ -108,9 +119,7 @@ size_t MP2Node::hashFunction(string key) {
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientCreate(string key, string value) {
-	/*
-	 * Implement this
-	 */
+	handleAction(MessageType::CREATE, key, value);
 }
 
 /**
@@ -123,9 +132,7 @@ void MP2Node::clientCreate(string key, string value) {
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientRead(string key){
-	/*
-	 * Implement this
-	 */
+	handleAction(MessageType::READ, key, "");
 }
 
 /**
@@ -138,9 +145,7 @@ void MP2Node::clientRead(string key){
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientUpdate(string key, string value){
-	/*
-	 * Implement this
-	 */
+	handleAction(MessageType::UPDATE, key, value);
 }
 
 /**
@@ -153,9 +158,28 @@ void MP2Node::clientUpdate(string key, string value){
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientDelete(string key){
-	/*
-	 * Implement this
-	 */
+	handleAction(MessageType::DELETE, key, "");
+}
+
+void MP2Node::handleAction(MessageType mType, string key, string value) {
+	auto nodes = findNodes(key);
+	int tId = createTransaction(mType, this->par->getcurrtime(), 3);
+
+	for(auto node: nodes) {
+		auto message = new Message(tId, memberNode->addr, mType, key, value);
+		dispatchMessages(message, node.getAddress());
+	}
+}
+
+void MP2Node::dispatchMessages(Message *message, Address *addr) {
+	emulNet->ENsend(&memberNode->addr, addr, (char *)message, sizeof(Message));
+}
+
+int MP2Node::createTransaction(MessageType mType, int time, int rf) {
+	auto id = g_transID++;
+	auto t = TransactionInfo {id, mType, time, rf, 0};
+	transactionTable.emplace(id, &t);
+	return id;
 }
 
 /**
@@ -166,11 +190,20 @@ void MP2Node::clientDelete(string key){
  * 			   	1) Inserts key value into the local hash table
  * 			   	2) Return true or false based on success or failure
  */
-bool MP2Node::createKeyValue(string key, string value, ReplicaType replica) {
+bool MP2Node::createKeyValue(string key, string value, int tId) {
 	/*
 	 * Implement this
 	 */
 	// Insert key, value, replicaType into the hash table
+	auto res = this->ht->create(key, value);
+
+	if (res) {
+		log->logCreateSuccess(&memberNode->addr, false, tId, key, value);
+	} else {
+		log->logCreateFail(&memberNode->addr, false, tId, key, value);
+	}
+
+	return res;
 }
 
 /**
@@ -248,9 +281,34 @@ void MP2Node::checkMessages() {
 
 		string message(data, data + size);
 
+		auto msg = (Message *) data;
+
+		switch(msg->type) {
+			case MessageType::CREATE: {
+				auto res = createKeyValue(msg->key, msg->value, msg->transID);
+				auto addr = msg->fromAddr;
+				msg->type = MessageType::REPLY;
+				msg->success = res;
+				msg->fromAddr = memberNode->addr;
+				dispatchMessages(msg, &addr);
+			}
+				break;
+			case MessageType::REPLY: {
+				auto trans = transactionTable[msg->transID];
+				trans->replyCount++;
+			}
+				break;
+		}
+
 		/*
 		 * Handle the message types here
 		 */
+
+		for(auto t: transactionTable) {
+		    if (t.second->replyCount > 2) {
+                log->logCreateSuccess(&memberNode->addr, false, t.first, t.second->, value);
+            }
+		}
 
 	}
 
