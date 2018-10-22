@@ -28,6 +28,7 @@ typedef struct TransactionInfo {
 	string key;
 	string value;
 	bool logged;
+	int successCount;
 }TransactionInfo;
 
 /**

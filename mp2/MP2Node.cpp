@@ -52,12 +52,25 @@ void MP2Node::updateRing() {
 	// Sort the list based on the hashCode
 	sort(curMemList.begin(), curMemList.end());
 
+	bool changed = false;
+
+	/*
+	* Step 3: Run the stabilization protocol IF REQUIRED
+	*/
+	if (!ring.empty()) {
+		for (int i = 0; i < curMemList.size(); i++) {
+			if (curMemList[i].getHashCode() != ring[i].getHashCode()) {
+				changed = true;
+				break;
+			}
+		}
+	}
+
 	ring = curMemList;
 
-		/*
-         * Step 3: Run the stabilization protocol IF REQUIRED
-         */
-	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
+	if (changed) {
+		stabilizationProtocol();
+	}
 }
 
 /**
@@ -177,7 +190,11 @@ void MP2Node::dispatchMessages(Message *message, Address *addr) {
 
 void MP2Node::sendReply(Message *msg, bool res) {
 	auto sendToAddr = msg->fromAddr;
-	msg->type = MessageType::REPLY;
+	if (msg->type == MessageType::READ) {
+		msg->type = MessageType::READREPLY;
+	} else {
+		msg->type = MessageType::REPLY;
+	}
 	msg->success = res;
 	msg->fromAddr = memberNode->addr;
 	dispatchMessages(msg, &sendToAddr);
@@ -193,7 +210,8 @@ int MP2Node::createTransaction(MessageType mType, int time, int rf, string key, 
 		replyCount: 0,
 		key: key,
 		value: value,
-		logged: false
+		logged: false,
+		successCount: 0
 	};
 	transactionTable.emplace(id, t);
 	return id;
@@ -210,7 +228,10 @@ int MP2Node::createTransaction(MessageType mType, int time, int rf, string key, 
 bool MP2Node::createKeyValue(string key, string value, int tId) {
 	auto res = this->ht->create(key, value);
 
-	logOperation(MessageType::CREATE, false, res, tId, key, value);
+	// hack for recover: not log recover messages
+	if (tId != -1) {
+		logOperation(MessageType::CREATE, false, res, tId, key, value);
+	}
 
 	return res;
 }
@@ -303,11 +324,16 @@ void MP2Node::checkMessages() {
 		switch(msg->type) {
 			case MessageType::CREATE: {
 				auto res = createKeyValue(msg->key, msg->value, msg->transID);
-				sendReply(msg, res);
+
+				// hack for recover: not reply on recover messages
+				if (msg->transID != -1) {
+					sendReply(msg, res);
+				}
 			}
 				break;
 			case MessageType::READ: {
 				auto res = readKey(msg->key, msg->transID);
+				msg->value = res;
 				sendReply(msg, !res.empty());
 			}
 				break;
@@ -324,6 +350,17 @@ void MP2Node::checkMessages() {
 			case MessageType::REPLY: {
 				auto trans = transactionTable[msg->transID];
 				trans->replyCount++;
+				if (msg->success) {
+					trans->successCount++;
+				}
+			}
+			case MessageType::READREPLY: {
+				auto trans = transactionTable[msg->transID];
+				trans->replyCount++;
+				trans->value = msg->value;
+				if (msg->success) {
+					trans->successCount++;
+				}
 			}
 				break;
 		}
@@ -342,12 +379,21 @@ void MP2Node::checkTransaction() {
 	// check completed transaction
 	for(auto t: transactionTable) {
 		if (!t.second->logged && t.second->replyCount >= 2) {
-			logOperation(t.second->type, true, true, t.first, t.second->key, t.second->value);
+			auto res = t.second->successCount == t.second->replyCount;
+			logOperation(t.second->type, true, res, t.first, t.second->key, t.second->value);
 			t.second->logged = true;
 		}
 	}
 
 	// Check timeouts
+	for(auto t: transactionTable) {
+		if (!t.second->logged) {
+			if (par->getcurrtime() - t.second->createTime >= 30) {
+				logOperation(t.second->type, true, false, t.first, t.second->key, t.second->value);
+				t.second->logged = true;
+			}
+		}
+	}
 }
 
 void MP2Node::logOperation(MessageType mType, bool isCoordinator, bool isSuccess, int transID, string key, string value) {
@@ -452,7 +498,12 @@ int MP2Node::enqueueWrapper(void *env, char *buff, int size) {
  *				Note:- "CORRECT" replicas implies that every key is replicated in its two neighboring nodes in the ring
  */
 void MP2Node::stabilizationProtocol() {
-	/*
-	 * Implement this
-	 */
+	for(auto d: ht->hashTable) {
+		auto nodes = findNodes(d.first);
+
+		for(auto node: nodes) {
+			auto message = new Message(-1, memberNode->addr, CREATE, d.first, d.second);
+			dispatchMessages(message, node.getAddress());
+		}
+	}
 }
