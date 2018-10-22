@@ -62,6 +62,7 @@ private:
 	// Transactions
 	map<int, TransactionInfo*> transactionTable;
 	int createTransaction(MessageType mType, int time, int rf, string key, string value);
+	void checkTransaction();
 
 public:
 	MP2Node(Member *memberNode, Params *par, EmulNet *emulNet, Log *log, Address *addressOfMember);
@@ -83,6 +84,8 @@ public:
 	void clientUpdate(string key, string value);
 	void clientDelete(string key);
 
+	void logOperation(MessageType mType, bool isCoordinator, bool isSuccess, int transID, string key, string value);
+
 	// receive messages from Emulnet
 	bool recvLoop();
 	static int enqueueWrapper(void *env, char *buff, int size);
@@ -95,15 +98,16 @@ public:
 
 	// coordinator dispatches messages to corresponding nodes
 	void dispatchMessages(Message *message, Address *addr);
+	void sendReply(Message *message, bool res);
 
 	// find the addresses of nodes that are responsible for a key
 	vector<Node> findNodes(string key);
 
 	// server
 	bool createKeyValue(string key, string value, int tId);
-	string readKey(string key);
-	bool updateKeyValue(string key, string value, ReplicaType replica);
-	bool deletekey(string key);
+	string readKey(string key, int tId);
+	bool updateKeyValue(string key, string value, int tId);
+	bool deletekey(string key, int tId);
 
 	// stabilization protocol - handle multiple failures
 	void stabilizationProtocol();

@@ -175,11 +175,19 @@ void MP2Node::dispatchMessages(Message *message, Address *addr) {
 	emulNet->ENsend(&memberNode->addr, addr, (char *)message, sizeof(Message));
 }
 
+void MP2Node::sendReply(Message *msg, bool res) {
+	auto sendToAddr = msg->fromAddr;
+	msg->type = MessageType::REPLY;
+	msg->success = res;
+	msg->fromAddr = memberNode->addr;
+	dispatchMessages(msg, &sendToAddr);
+}
+
 int MP2Node::createTransaction(MessageType mType, int time, int rf, string key, string value) {
 	auto id = g_transID++;
 	auto t = new TransactionInfo {
-		id: id, type:
-		mType,
+		id: id,
+		type: mType,
 		createTime: time,
 		replicationFactor: rf,
 		replyCount: 0,
@@ -200,17 +208,9 @@ int MP2Node::createTransaction(MessageType mType, int time, int rf, string key, 
  * 			   	2) Return true or false based on success or failure
  */
 bool MP2Node::createKeyValue(string key, string value, int tId) {
-	/*
-	 * Implement this
-	 */
-	// Insert key, value, replicaType into the hash table
 	auto res = this->ht->create(key, value);
 
-	if (res) {
-		log->logCreateSuccess(&memberNode->addr, false, tId, key, value);
-	} else {
-		log->logCreateFail(&memberNode->addr, false, tId, key, value);
-	}
+	logOperation(MessageType::CREATE, false, res, tId, key, value);
 
 	return res;
 }
@@ -223,11 +223,14 @@ bool MP2Node::createKeyValue(string key, string value, int tId) {
  * 			    1) Read key from local hash table
  * 			    2) Return value
  */
-string MP2Node::readKey(string key) {
-	/*
-	 * Implement this
-	 */
-	// Read key from local hash table and return value
+string MP2Node::readKey(string key, int tId) {
+	auto value = this->ht->read(key);
+
+	auto res = !value.empty();
+
+	logOperation(MessageType::READ, false, res, tId, key, value);
+
+	return value;
 }
 
 /**
@@ -238,11 +241,12 @@ string MP2Node::readKey(string key) {
  * 				1) Update the key to the new value in the local hash table
  * 				2) Return true or false based on success or failure
  */
-bool MP2Node::updateKeyValue(string key, string value, ReplicaType replica) {
-	/*
-	 * Implement this
-	 */
-	// Update key in local hash table and return true or false
+bool MP2Node::updateKeyValue(string key, string value, int tId) {
+	auto res = this->ht->update(key, value);
+
+	logOperation(MessageType::UPDATE, false, res, tId, key, value);
+
+	return res;
 }
 
 /**
@@ -253,11 +257,12 @@ bool MP2Node::updateKeyValue(string key, string value, ReplicaType replica) {
  * 				1) Delete the key from the local hash table
  * 				2) Return true or false based on success or failure
  */
-bool MP2Node::deletekey(string key) {
-	/*
-	 * Implement this
-	 */
-	// Delete the key from the local hash table
+bool MP2Node::deletekey(string key, int tId) {
+	auto res = this->ht->deleteKey(key);
+
+	logOperation(MessageType::DELETE, false, res, tId, key, "");
+
+	return res;
 }
 
 /**
@@ -292,14 +297,28 @@ void MP2Node::checkMessages() {
 
 		auto msg = (Message *) data;
 
+		/*
+			* Handle the message types here
+ 		*/
 		switch(msg->type) {
 			case MessageType::CREATE: {
 				auto res = createKeyValue(msg->key, msg->value, msg->transID);
-				auto addr = msg->fromAddr;
-				msg->type = MessageType::REPLY;
-				msg->success = res;
-				msg->fromAddr = memberNode->addr;
-				dispatchMessages(msg, &addr);
+				sendReply(msg, res);
+			}
+				break;
+			case MessageType::READ: {
+				auto res = readKey(msg->key, msg->transID);
+				sendReply(msg, !res.empty());
+			}
+				break;
+			case MessageType::UPDATE: {
+				auto res = updateKeyValue(msg->key, msg->value, msg->transID);
+				sendReply(msg, res);
+			}
+				break;
+			case MessageType::DELETE: {
+				auto res = deletekey(msg->key, msg->transID);
+				sendReply(msg, res);
 			}
 				break;
 			case MessageType::REPLY: {
@@ -308,23 +327,64 @@ void MP2Node::checkMessages() {
 			}
 				break;
 		}
-
-		/*
-		 * Handle the message types here
-		 */
-
-		for(auto t: transactionTable) {
-		    if (!t.second->logged && t.second->replyCount >= 2) {
-                log->logCreateSuccess(&memberNode->addr, false, t.first, t.second->key, t.second->value);
-                t.second->logged = true;
-            }
-		}
 	}
 
 	/*
 	 * This function should also ensure all READ and UPDATE operation
 	 * get QUORUM replies
 	 */
+	checkTransaction();
+}
+
+
+
+void MP2Node::checkTransaction() {
+	// check completed transaction
+	for(auto t: transactionTable) {
+		if (!t.second->logged && t.second->replyCount >= 2) {
+			logOperation(t.second->type, true, true, t.first, t.second->key, t.second->value);
+			t.second->logged = true;
+		}
+	}
+
+	// Check timeouts
+}
+
+void MP2Node::logOperation(MessageType mType, bool isCoordinator, bool isSuccess, int transID, string key, string value) {
+	switch (mType) {
+		case CREATE: {
+			if (isSuccess) {
+				log->logCreateSuccess(&memberNode->addr, isCoordinator, transID, key, value);
+			} else {
+				log->logCreateFail(&memberNode->addr, isCoordinator, transID, key, value);
+			}
+		}
+			break;
+		case READ: {
+			if (isSuccess) {
+				log->logReadSuccess(&memberNode->addr, isCoordinator, transID, key, value);
+			} else {
+				log->logReadFail(&memberNode->addr, isCoordinator, transID, key);
+			}
+		}
+			break;
+		case UPDATE: {
+			if (isSuccess) {
+				log->logUpdateSuccess(&memberNode->addr, isCoordinator, transID, key, value);
+			} else {
+				log->logUpdateFail(&memberNode->addr, isCoordinator, transID, key, value);
+			}
+		}
+			break;
+		case DELETE: {
+			if (isSuccess) {
+				log->logDeleteSuccess(&memberNode->addr, isCoordinator, transID, key);
+			} else {
+				log->logDeleteFail(&memberNode->addr, isCoordinator, transID, key);
+			}
+		}
+			break;
+	}
 }
 
 /**
