@@ -163,7 +163,7 @@ void MP2Node::clientDelete(string key){
 
 void MP2Node::handleAction(MessageType mType, string key, string value) {
 	auto nodes = findNodes(key);
-	int tId = createTransaction(mType, this->par->getcurrtime(), 3);
+	int tId = createTransaction(mType, this->par->getcurrtime(), 3, key, value);
 
 	for(auto node: nodes) {
 		auto message = new Message(tId, memberNode->addr, mType, key, value);
@@ -175,10 +175,19 @@ void MP2Node::dispatchMessages(Message *message, Address *addr) {
 	emulNet->ENsend(&memberNode->addr, addr, (char *)message, sizeof(Message));
 }
 
-int MP2Node::createTransaction(MessageType mType, int time, int rf) {
+int MP2Node::createTransaction(MessageType mType, int time, int rf, string key, string value) {
 	auto id = g_transID++;
-	auto t = TransactionInfo {id, mType, time, rf, 0};
-	transactionTable.emplace(id, &t);
+	auto t = new TransactionInfo {
+		id: id, type:
+		mType,
+		createTime: time,
+		replicationFactor: rf,
+		replyCount: 0,
+		key: key,
+		value: value,
+		logged: false
+	};
+	transactionTable.emplace(id, t);
 	return id;
 }
 
@@ -305,11 +314,11 @@ void MP2Node::checkMessages() {
 		 */
 
 		for(auto t: transactionTable) {
-		    if (t.second->replyCount > 2) {
-                log->logCreateSuccess(&memberNode->addr, false, t.first, t.second->, value);
+		    if (!t.second->logged && t.second->replyCount >= 2) {
+                log->logCreateSuccess(&memberNode->addr, false, t.first, t.second->key, t.second->value);
+                t.second->logged = true;
             }
 		}
-
 	}
 
 	/*

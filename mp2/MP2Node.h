@@ -25,6 +25,9 @@ typedef struct TransactionInfo {
 	int createTime;
 	int replicationFactor;
 	int replyCount;
+	string key;
+	string value;
+	bool logged;
 }TransactionInfo;
 
 /**
@@ -58,7 +61,7 @@ private:
 
 	// Transactions
 	map<int, TransactionInfo*> transactionTable;
-	int createTransaction(MessageType mType, int time, int rf);
+	int createTransaction(MessageType mType, int time, int rf, string key, string value);
 
 public:
 	MP2Node(Member *memberNode, Params *par, EmulNet *emulNet, Log *log, Address *addressOfMember);
