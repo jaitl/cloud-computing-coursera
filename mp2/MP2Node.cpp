@@ -388,7 +388,7 @@ void MP2Node::checkTransaction() {
 	// Check timeouts
 	for(auto t: transactionTable) {
 		if (!t.second->logged) {
-			if (par->getcurrtime() - t.second->createTime >= 30) {
+			if (par->getcurrtime() - t.second->createTime > 10) {
 				logOperation(t.second->type, true, false, t.first, t.second->key, t.second->value);
 				t.second->logged = true;
 			}
